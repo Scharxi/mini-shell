@@ -1,3 +1,5 @@
+pub mod command;
+
 use std::io::Write;
 use tokenizer::{Tokenizer, Token};
 
