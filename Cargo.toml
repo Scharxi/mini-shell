@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = [ "example","shell"]
+members = [ "example","shell", "tokenizer"]
 
 [workspace.package]
 name = "mini-shell"

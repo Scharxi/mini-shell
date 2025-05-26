@@ -1,7 +1,7 @@
 use std::io::Write;
+use tokenizer::{Tokenizer, Token};
 
 pub struct Shell {
-
 }
 
 impl Shell {
@@ -23,15 +23,25 @@ impl Shell {
         self.put_prefixed_line("");
         loop {
             if let Some(line) = self.read_line() {
-                self.put_line(&line);
-                // let tokens = tokenize(line);
-                //let ast = parse(tokens);
-                //let result = eval(ast);
-                //println!("{}", result);
+                let mut tokenizer = Tokenizer::new(line);
+                tokenizer.scan_tokens();
+                
+                for token in tokenizer.tokens {
+                    match token.kind {
+                        tokenizer::TokenType::Cmd => self.execute_command(&token),
+                        _ => continue,
+                    }
+                }
+                
+                self.put_prefixed_line("");
             } else {
                 self.put_prefixed_line("");
             }
         }
+    }
+
+    fn execute_command(&self, cmd: &Token) {
+        self.put_line(&format!("Executing command: {}\n", cmd.lexeme));
     }
 
     fn read_line(&self) -> Option<String> { 

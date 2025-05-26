@@ -1,7 +1,6 @@
 [package]
-name = "shell"
+name = "tokenizer"
 version = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
-tokenizer = { path = "../tokenizer" }
