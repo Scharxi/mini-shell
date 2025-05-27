@@ -80,6 +80,15 @@ pub trait Command {
     fn set_input(&mut self, input: Box<dyn std::io::Read>) {
         self.get_io_redirection().from = Some(input);
     }
+    fn get_input_mut(&mut self) -> &mut Box<dyn std::io::Read> {
+        self.get_io_redirection().from.as_mut().unwrap()
+    }
+    fn get_output_mut(&mut self) -> &mut Box<dyn std::io::Write> {
+        self.get_io_redirection().to.as_mut().unwrap()
+    }
+    fn get_error_mut(&mut self) -> &mut Box<dyn std::io::Write> {
+        self.get_io_redirection().error.as_mut().unwrap()
+    }
     fn get_args_mut(&mut self) -> &mut Vec<String>;
     fn get_flags_mut(&mut self) -> &mut Vec<Flag>;
     fn execute(&self) -> Result<(), Box<dyn std::error::Error>>;
