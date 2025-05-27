@@ -66,6 +66,9 @@ pub struct IoRedirection {
 pub trait Command {
     fn get_name(&self) -> &str;
     fn get_args(&self) -> &[String];
+    fn get_args_len(&self) -> usize {
+        self.get_args().len()
+    }
     fn get_flags(&self) -> &[Flag];
     fn get_io_redirection(&mut self) -> &mut IoRedirection;
     fn set_output(&mut self, output: Box<dyn std::io::Write>) {
@@ -301,6 +304,14 @@ mod tests {
         assert_eq!(cmd.get_name(), "cd");
         assert!(cmd.get_args().is_empty());
         assert!(cmd.get_flags().is_empty());
+    }
+
+    #[test]
+    fn test_command_get_args_len() {
+        let mut cmd = ChangeDirCommand::new();
+        cmd.get_args_mut().push("arg1".to_string());
+        cmd.get_args_mut().push("arg2".to_string());
+        assert_eq!(cmd.get_args_len(), 2);
     }
 }
 
