@@ -43,16 +43,26 @@ impl CommandParser {
         }
     }
 
+    fn invoke_command(&mut self, cmd: &mut Box<dyn Command>) {
+        self.append_args(cmd);
+        self.append_flags(cmd);
+    }
+
     pub fn parse(&mut self) -> Result<Box<dyn Command>, String> {
-        let mut cmd: Box<dyn Command> = match self.tokens[0].lexeme.as_str() {
-            "cd" => Box::new(ChangeDirCommand::new()),
-            _ => return Err(format!("Unknown command: {}", self.tokens[0].lexeme)),
-        };
-
-        self.append_args(&mut cmd);
-        self.append_flags(&mut cmd);
-
-        Ok(cmd)
+        if let Some(token) = self.tokens.get(0) {
+            match token.kind {
+                TokenType::Cmd => match token.lexeme.as_str() {
+                    "cd" => {
+                        let mut cmd: Box<dyn Command> = Box::new(ChangeDirCommand::new());
+                        self.invoke_command(&mut cmd);
+                        return Ok(cmd);
+                    }
+                    _ => return Err(format!("Unknown command: {}", token.lexeme)),
+                }
+                _ => return Err(format!("Unknown command: {}", token.lexeme)),
+            }
+        }
+        Err("No command provided".to_string())
     }
 }
 
@@ -94,11 +104,36 @@ pub trait Command {
     fn execute(&self) -> Result<(), Box<dyn std::error::Error>>;
 }
 
+impl ToString for dyn Command {
+    fn to_string(&self) -> String {
+        let mut result = String::new();
+        result.push_str(self.get_name());
+        result.push_str(" ");
+        result.push_str(self.get_args().join(" ").as_str());
+        result.push_str(self.get_flags().iter().map(|flag| flag.ident.to_string()).collect::<Vec<String>>().join(" ").as_str());
+        result
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct FlagIdent {
     pub short: Option<String>, 
     pub long: Option<String>,
+}
+
+impl ToString for FlagIdent {
+    fn to_string(&self) -> String {
+        let mut result = String::new();
+        if let Some(short) = self.short.clone() {
+            result.push_str(short.as_str());
+            return result;
+        }
+        if let Some(long) = self.long.clone() {
+            result.push_str(long.as_str());
+            return result;
+        }
+        result
+    }
 }
 
 impl FlagIdent {

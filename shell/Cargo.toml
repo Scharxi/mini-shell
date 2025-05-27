@@ -5,3 +5,5 @@ edition = { workspace = true }
 
 [dependencies]
 tokenizer = { path = "../tokenizer" }
+ctrlc = "3.4.1"
+dirs = "5.0.1"
