@@ -1,4 +1,5 @@
 use tokenizer::{Token, TokenType};
+use std::io::Write;
 
 use crate::History;
 
@@ -53,25 +54,19 @@ impl CommandParser {
     pub fn parse(&mut self) -> Result<Box<dyn Command>, String> {
         if let Some(token) = self.tokens.get(0) {
             match token.kind {
-                TokenType::Cmd => match token.lexeme.as_str() {
-                    "cd" => {
-                        let mut cmd: Box<dyn Command> = Box::new(ChangeDirCommand::new());
-                        self.invoke_command(&mut cmd);
-                        return Ok(cmd);
-                    }, 
-                    "history" => {
-                        let mut cmd: Box<dyn Command> = Box::new(HistoryCommand::new());
-                        self.invoke_command(&mut cmd);
-                        return Ok(cmd);
-                    }, 
-                    "pwd" => {
-                        let mut cmd: Box<dyn Command> = Box::new(PwdCommand::new());
-                        self.invoke_command(&mut cmd);
-                        return Ok(cmd);
-                    },
-                    _ => return Err(format!("Unknown command: {}", token.lexeme)),
+                TokenType::Cmd => {
+                    let cmd: Box<dyn Command> = match token.lexeme.as_str() {
+                        "cd" => Box::new(ChangeDirCommand::new()),
+                        "history" => Box::new(HistoryCommand::new()),
+                        "pwd" => Box::new(PwdCommand::new()),
+                        // For any other command, try to execute it as a system command
+                        _ => Box::new(SystemCommand::new(token.lexeme.clone())),
+                    };
+                    let mut cmd = cmd;
+                    self.invoke_command(&mut cmd);
+                    return Ok(cmd);
                 }
-                _ => return Err(format!("Unknown command: {}", token.lexeme)),
+                _ => return Err(format!("Expected command, got: {}", token.lexeme)),
             }
         }
         Err("No command provided".to_string())
@@ -327,6 +322,88 @@ impl Command for HistoryCommand {
         for command in history {
             println!("{}", command);
         }
+        Ok(())
+    }
+}
+
+pub struct SystemCommand {
+    pub name: String,
+    pub args: Vec<String>,
+    pub flags: Vec<Flag>,
+    pub io_redirection: IoRedirection,
+}
+
+impl SystemCommand {
+    pub fn new(name: String) -> Self {
+        Self {
+            name,
+            args: vec![],
+            flags: vec![],
+            io_redirection: IoRedirection::default(),
+        }
+    }
+}
+
+impl Command for SystemCommand {
+    fn get_name(&self) -> &str {
+        &self.name
+    }
+
+    fn get_args(&self) -> &[String] {
+        &self.args
+    }
+
+    fn get_flags(&self) -> &[Flag] {
+        &self.flags
+    }
+
+    fn get_args_mut(&mut self) -> &mut Vec<String> {
+        &mut self.args
+    }
+
+    fn get_flags_mut(&mut self) -> &mut Vec<Flag> {
+        &mut self.flags
+    }
+
+    fn get_io_redirection(&mut self) -> &mut IoRedirection {
+        &mut self.io_redirection
+    }
+
+    fn execute(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let mut command = std::process::Command::new(&self.name);
+        
+        // Add arguments
+        command.args(&self.args);
+        
+        // Add flags
+        for flag in &self.flags {
+            if let Some(value) = &flag.value {
+                command.arg(flag.ident.to_string() + "=" + value);
+            } else {
+                command.arg(flag.ident.to_string());
+            }
+        }
+
+        // Execute the command and handle output
+        let output = command.output()?;
+        
+        // Write stdout if we have it
+        if !output.stdout.is_empty() {
+            std::io::stdout().write_all(&output.stdout)?;
+        }
+        
+        // Write stderr if we have it
+        if !output.stderr.is_empty() {
+            std::io::stderr().write_all(&output.stderr)?;
+        }
+
+        if !output.status.success() {
+            return Err(format!("Command '{}' failed with exit code: {}", 
+                self.name, 
+                output.status.code().unwrap_or(-1))
+                .into());
+        }
+
         Ok(())
     }
 }
