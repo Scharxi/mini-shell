@@ -26,6 +26,10 @@ impl History {
         self.commands.push(command.to_string());
     }
 
+    pub fn clear(&mut self) {
+        self.commands.clear();
+    }
+
     fn get_history_file_path() -> PathBuf {
         let mut path = if let Some(home) = dirs::home_dir() {
             home
@@ -128,7 +132,10 @@ impl Shell {
                                 println!("Error: {}", e);
                             }
                             if let Ok(mut history) = self.history.lock() {
-                                history.append(cmd.to_string());
+                                // Ignore history commands
+                                if cmd.get_name() != "history" {
+                                    history.append(cmd.to_string());
+                                }
                             }
                         }
                         Err(e) => println!("Error: {}", e),

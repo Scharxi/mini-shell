@@ -87,6 +87,10 @@ pub trait Command {
         self.get_args().len()
     }
     fn get_flags(&self) -> &[Flag];
+    fn get_flag(&self, flag: &str) -> Option<&Flag> {
+        let flag_ident = FlagIdent::try_from(flag.to_string()).ok()?;
+        self.get_flags().iter().find(|f| f.ident == flag_ident)
+    }
     fn get_io_redirection(&mut self) -> &mut IoRedirection;
     fn set_output(&mut self, output: Box<dyn std::io::Write>) {
         self.get_io_redirection().to = Some(output);
@@ -122,10 +126,36 @@ impl ToString for dyn Command {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FlagIdent {
     pub short: Option<String>, 
     pub long: Option<String>,
+}
+
+impl TryFrom<String> for FlagIdent {
+    type Error = String;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if value.starts_with("--") {
+            Ok(Self { short: None, long: Some(value) })
+        } else if value.starts_with("-") {
+            Ok(Self { short: Some(value), long: None })
+        } else {
+            Err(format!("Invalid flag: {}", value))
+        }
+    }
+}
+
+impl TryFrom<&str> for FlagIdent {
+    type Error = String;
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        if value.starts_with("--") {
+            Ok(Self { short: None, long: Some(value.to_string()) })
+        } else if value.starts_with("-"){
+            Ok(Self { short: Some(value.to_string()), long: None })
+        } else {
+            Err(format!("Invalid flag: {}", value))
+        }
+    }
 }
 
 impl ToString for FlagIdent {
@@ -239,6 +269,14 @@ impl Command for HistoryCommand {
 
     fn execute(&self) -> Result<(), Box<dyn std::error::Error>> {
         let history = History::load_from_disk()?;
+
+        if self.get_flag("--clear").is_some() || self.get_flag("-c").is_some() {
+            let mut history = History::load_from_disk()?;
+            history.clear();
+            history.save();
+            return Ok(());
+        }
+
         for command in history {
             println!("{}", command);
         }
