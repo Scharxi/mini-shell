@@ -80,6 +80,13 @@ pub struct IoRedirection {
     pub error: Option<Box<dyn std::io::Write>>,
 }
 
+pub struct CommandHelp {
+    pub short_desc: String,
+    pub long_desc: String,
+    pub usage: String,
+    pub flags: Vec<(String, String)>, // (flag, description)
+}
+
 pub trait Command {
     fn get_name(&self) -> &str;
     fn get_args(&self) -> &[String];
@@ -112,7 +119,31 @@ pub trait Command {
     }
     fn get_args_mut(&mut self) -> &mut Vec<String>;
     fn get_flags_mut(&mut self) -> &mut Vec<Flag>;
-    fn execute(&self) -> Result<(), Box<dyn std::error::Error>>;
+    fn execute(&self) -> Result<(), Box<dyn std::error::Error>> {
+        // Check for help flag first
+        if self.get_flag("--help").is_some() || self.get_flag("-h").is_some() {
+            self.print_help();
+            return Ok(());
+        }
+        self.execute_impl()
+    }
+    fn execute_impl(&self) -> Result<(), Box<dyn std::error::Error>>;
+    fn get_help(&self) -> CommandHelp;
+    fn print_help(&self) {
+        let help = self.get_help();
+        println!("{}:", self.get_name().to_uppercase());
+        println!("  {}\n", help.short_desc);
+        println!("Description:");
+        println!("  {}\n", help.long_desc);
+        println!("Usage:");
+        println!("  {}\n", help.usage);
+        if !help.flags.is_empty() {
+            println!("Flags:");
+            for (flag, desc) in help.flags {
+                println!("  {:<20} {}", flag, desc);
+            }
+        }
+    }
 }
 
 impl ToString for dyn Command {
@@ -220,10 +251,21 @@ impl Command for PwdCommand {
         unimplemented!("PwdCommand does not support mutable flags") 
     }
     
-    fn execute(&self) -> Result<(), Box<dyn std::error::Error>> {
+    fn execute_impl(&self) -> Result<(), Box<dyn std::error::Error>> {
         let path = std::env::current_dir()?;
         println!("{}", path.display());
         Ok(())
+    }
+
+    fn get_help(&self) -> CommandHelp {
+        CommandHelp {
+            short_desc: "Print the current working directory".to_string(),
+            long_desc: "Display the full path of the current working directory.".to_string(),
+            usage: "pwd [flags]".to_string(),
+            flags: vec![
+                ("--help, -h".to_string(), "Show this help message".to_string()),
+            ],
+        }
     }
 }
 
@@ -261,7 +303,7 @@ impl Command for ChangeDirCommand {
         &mut self.flags
     }
 
-    fn execute(&self) -> Result<(), Box<dyn std::error::Error>> {
+    fn execute_impl(&self) -> Result<(), Box<dyn std::error::Error>> {
         let path = self.args.get(0).ok_or("No path provided")?;
         std::env::set_current_dir(path)?;
         Ok(())
@@ -269,6 +311,19 @@ impl Command for ChangeDirCommand {
     
     fn get_io_redirection(&mut self) -> &mut IoRedirection {
         &mut self.io_redirection
+    }
+
+    fn get_help(&self) -> CommandHelp {
+        CommandHelp {
+            short_desc: "Change the current working directory".to_string(),
+            long_desc: "Change the shell's current working directory to the specified path. \
+                       If no path is provided, an error will be displayed.".to_string(),
+            usage: "cd [flags] <path>".to_string(),
+            flags: vec![
+                ("--help, -h".to_string(), "Show this help message".to_string()),
+                ("--follow-symlinks".to_string(), "Follow symbolic links".to_string()),
+            ],
+        }
     }
 }
 
@@ -309,7 +364,7 @@ impl Command for HistoryCommand {
         &mut self.flags
     }
 
-    fn execute(&self) -> Result<(), Box<dyn std::error::Error>> {
+    fn execute_impl(&self) -> Result<(), Box<dyn std::error::Error>> {
         let history = History::load_from_disk()?;
 
         if self.get_flag("--clear").is_some() || self.get_flag("-c").is_some() {
@@ -323,6 +378,19 @@ impl Command for HistoryCommand {
             println!("{}", command);
         }
         Ok(())
+    }
+
+    fn get_help(&self) -> CommandHelp {
+        CommandHelp {
+            short_desc: "Display or manage the command history".to_string(),
+            long_desc: "Show the history of commands that have been executed. \
+                       You can also clear the history using the --clear flag.".to_string(),
+            usage: "history [flags]".to_string(),
+            flags: vec![
+                ("--help, -h".to_string(), "Show this help message".to_string()),
+                ("--clear, -c".to_string(), "Clear the command history".to_string()),
+            ],
+        }
     }
 }
 
@@ -369,13 +437,11 @@ impl Command for SystemCommand {
         &mut self.io_redirection
     }
 
-    fn execute(&self) -> Result<(), Box<dyn std::error::Error>> {
+    fn execute_impl(&self) -> Result<(), Box<dyn std::error::Error>> {
         let mut command = std::process::Command::new(&self.name);
         
-        // Add arguments
         command.args(&self.args);
         
-        // Add flags
         for flag in &self.flags {
             if let Some(value) = &flag.value {
                 command.arg(flag.ident.to_string() + "=" + value);
@@ -384,15 +450,12 @@ impl Command for SystemCommand {
             }
         }
 
-        // Execute the command and handle output
         let output = command.output()?;
         
-        // Write stdout if we have it
         if !output.stdout.is_empty() {
             std::io::stdout().write_all(&output.stdout)?;
         }
         
-        // Write stderr if we have it
         if !output.stderr.is_empty() {
             std::io::stderr().write_all(&output.stderr)?;
         }
@@ -405,6 +468,17 @@ impl Command for SystemCommand {
         }
 
         Ok(())
+    }
+
+    fn get_help(&self) -> CommandHelp {
+        CommandHelp {
+            short_desc: format!("Execute the system command '{}'", self.name),
+            long_desc: format!("Execute the system command '{}' with the provided arguments and flags.", self.name),
+            usage: format!("{} [flags] [args...]", self.name),
+            flags: vec![
+                ("--help, -h".to_string(), "Show this help message".to_string()),
+            ],
+        }
     }
 }
 
