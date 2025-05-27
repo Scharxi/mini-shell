@@ -56,10 +56,27 @@ impl CommandParser {
     }
 }
 
+#[derive(Default)]
+pub struct IoRedirection {
+    pub from: Option<Box<dyn std::io::Read>>,
+    pub to: Option<Box<dyn std::io::Write>>,
+    pub error: Option<Box<dyn std::io::Write>>,
+}
+
 pub trait Command {
     fn get_name(&self) -> &str;
     fn get_args(&self) -> &[String];
     fn get_flags(&self) -> &[Flag];
+    fn get_io_redirection(&mut self) -> &mut IoRedirection;
+    fn set_output(&mut self, output: Box<dyn std::io::Write>) {
+        self.get_io_redirection().to = Some(output);
+    }
+    fn set_error(&mut self, error: Box<dyn std::io::Write>) {
+        self.get_io_redirection().error = Some(error);
+    }
+    fn set_input(&mut self, input: Box<dyn std::io::Read>) {
+        self.get_io_redirection().from = Some(input);
+    }
     fn get_args_mut(&mut self) -> &mut Vec<String>;
     fn get_flags_mut(&mut self) -> &mut Vec<Flag>;
     fn execute(&self) -> Result<(), Box<dyn std::error::Error>>;
@@ -88,11 +105,12 @@ pub struct ChangeDirCommand {
     pub name: String,
     pub args: Vec<String>,
     pub flags: Vec<Flag>,
+    pub io_redirection: IoRedirection,
 }
 
 impl ChangeDirCommand {
     pub fn new() -> Self {
-        Self { name: "cd".to_string(), args: vec![], flags: vec![] }
+        Self { name: "cd".to_string(), args: vec![], flags: vec![], io_redirection: IoRedirection::default() }
     }
 }
 
@@ -122,6 +140,10 @@ impl Command for ChangeDirCommand {
         std::env::set_current_dir(path)?;
         Ok(())
     }
+    
+    fn get_io_redirection(&mut self) -> &mut IoRedirection {
+        &mut self.io_redirection
+    }
 }
 
 #[cfg(test)]
@@ -133,6 +155,17 @@ mod tests {
         let mut tokenizer = Tokenizer::new(input.to_string());
         tokenizer.scan_tokens();
         tokenizer.tokens
+    }
+
+    #[test]
+    fn test_io_redirection() {
+        let mut cmd = ChangeDirCommand::new();
+        cmd.set_output(Box::new(std::io::Cursor::new(Vec::new())));
+        cmd.set_error(Box::new(std::io::Cursor::new(Vec::new())));
+        cmd.set_input(Box::new(std::io::Cursor::new(Vec::new())));
+        assert!(cmd.get_io_redirection().to.is_some());
+        assert!(cmd.get_io_redirection().error.is_some());
+        assert!(cmd.get_io_redirection().from.is_some());
     }
 
     #[test]
