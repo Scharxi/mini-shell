@@ -63,7 +63,12 @@ impl CommandParser {
                         let mut cmd: Box<dyn Command> = Box::new(HistoryCommand::new());
                         self.invoke_command(&mut cmd);
                         return Ok(cmd);
-                    }
+                    }, 
+                    "pwd" => {
+                        let mut cmd: Box<dyn Command> = Box::new(PwdCommand::new());
+                        self.invoke_command(&mut cmd);
+                        return Ok(cmd);
+                    },
                     _ => return Err(format!("Unknown command: {}", token.lexeme)),
                 }
                 _ => return Err(format!("Unknown command: {}", token.lexeme)),
@@ -183,6 +188,48 @@ impl FlagIdent {
 pub struct Flag {
     pub ident: FlagIdent, 
     pub value: Option<String>,
+}
+
+pub struct PwdCommand {
+    pub name: String,
+    pub io_redirection: IoRedirection,
+}
+
+impl PwdCommand {
+    pub fn new() -> Self {
+        Self { name: "pwd".to_string(), io_redirection: IoRedirection::default() }
+    }
+}
+
+impl Command for PwdCommand {
+    fn get_name(&self) -> &str {
+        &self.name
+    }
+    
+    fn get_args(&self) -> &[String] {
+        &[]
+    }
+    
+    fn get_flags(&self) -> &[Flag] {
+        &[]
+    }
+    
+    fn get_io_redirection(&mut self) -> &mut IoRedirection {
+        &mut self.io_redirection
+    }
+    fn get_args_mut(&mut self) -> &mut Vec<String> {
+        unimplemented!("PwdCommand does not support mutable arguments")
+    }
+    
+    fn get_flags_mut(&mut self) -> &mut Vec<Flag> {
+        unimplemented!("PwdCommand does not support mutable flags") 
+    }
+    
+    fn execute(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let path = std::env::current_dir()?;
+        println!("{}", path.display());
+        Ok(())
+    }
 }
 
 pub struct ChangeDirCommand {
