@@ -1,6 +1,6 @@
 pub mod command;
 
-use std::{fs::File, io::{Write, ErrorKind}, process, sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex}, path::PathBuf};
+use std::{fs::File, io::{BufRead, BufReader, ErrorKind, Write}, path::PathBuf, process, sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex}};
 use command::CommandParser;
 use tokenizer::Tokenizer;
 
@@ -10,9 +10,16 @@ pub struct History {
     pub commands: Vec<String>,
 }
 
+impl Iterator for History {
+    type Item = String;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.commands.pop()
+    }
+}
+
 impl History {
     pub fn new() -> Self {
-        Self { commands: vec![] }
+        Self { commands: Vec::new() }
     }
 
     pub fn append<T: ToString>(&mut self, command: T) {
@@ -29,6 +36,21 @@ impl History {
         path
     }
 
+    pub fn load_from_disk() -> Result<Self, Box<dyn std::error::Error>> {
+        let history_path = Self::get_history_file_path();
+        let mut history = Self::new();
+        if let Ok(file) = File::open(&history_path) {
+            let reader = BufReader::new(file);
+            for line in reader.lines() {
+                history.commands.push(line?);
+            }
+        } else {
+            println!("No history file found at {}", history_path.display());
+        }
+
+        Ok(history)
+    }
+
     pub fn save(&self) {
         let history_path = Self::get_history_file_path();
         if let Ok(mut file) = File::create(&history_path) {
@@ -40,12 +62,6 @@ impl History {
         } else {
             eprintln!("Failed to save history to {}", history_path.display());
         }
-    }
-}
-
-impl Drop for History {
-    fn drop(&mut self) {
-        self.save();
     }
 }
 

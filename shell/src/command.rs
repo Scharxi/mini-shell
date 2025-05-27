@@ -1,5 +1,7 @@
 use tokenizer::{Token, TokenType};
 
+use crate::History;
+
 
 
 pub struct CommandParser {
@@ -54,6 +56,11 @@ impl CommandParser {
                 TokenType::Cmd => match token.lexeme.as_str() {
                     "cd" => {
                         let mut cmd: Box<dyn Command> = Box::new(ChangeDirCommand::new());
+                        self.invoke_command(&mut cmd);
+                        return Ok(cmd);
+                    }, 
+                    "history" => {
+                        let mut cmd: Box<dyn Command> = Box::new(HistoryCommand::new());
                         self.invoke_command(&mut cmd);
                         return Ok(cmd);
                     }
@@ -190,6 +197,52 @@ impl Command for ChangeDirCommand {
     
     fn get_io_redirection(&mut self) -> &mut IoRedirection {
         &mut self.io_redirection
+    }
+}
+
+pub struct HistoryCommand {
+    pub name: String, 
+    pub args: Vec<String>,
+    pub flags: Vec<Flag>,
+    pub io_redirection: IoRedirection,
+}
+impl HistoryCommand {
+    fn new() -> Self {
+        Self { name: "history".to_string(), args: vec![], flags: vec![], io_redirection: IoRedirection::default() }
+    }
+}
+
+impl Command for HistoryCommand {
+    fn get_name(&self) -> &str {
+        &self.name
+    }
+
+    fn get_args(&self) -> &[String] {
+        &self.args
+    }
+
+    fn get_flags(&self) -> &[Flag] {
+        &self.flags
+    }
+
+    fn get_io_redirection(&mut self) -> &mut IoRedirection {
+        &mut self.io_redirection
+    }
+
+    fn get_args_mut(&mut self) -> &mut Vec<String> {
+        &mut self.args
+    }
+
+    fn get_flags_mut(&mut self) -> &mut Vec<Flag> {
+        &mut self.flags
+    }
+
+    fn execute(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let history = History::load_from_disk()?;
+        for command in history {
+            println!("{}", command);
+        }
+        Ok(())
     }
 }
 
