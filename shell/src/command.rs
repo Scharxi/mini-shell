@@ -566,11 +566,12 @@ mod tests {
     fn test_parse_unknown_command() {
         let tokens = create_tokens("unknown_cmd arg1 arg2");
         let mut parser = CommandParser::new(tokens);
+        let cmd = parser.parse().unwrap();
         
-        match parser.parse() {
-            Ok(_) => panic!("Expected error for unknown command"),
-            Err(e) => assert_eq!(e, "Unknown command: unknown_cmd"),
-        }
+        // Verify it's treated as a system command
+        assert_eq!(cmd.get_name(), "unknown_cmd");
+        assert_eq!(cmd.get_args(), &["arg1", "arg2"]);
+        assert!(cmd.get_flags().is_empty());
     }
 
     #[test]

@@ -5,6 +5,10 @@ pub enum TokenType {
     Flag,
     LongFlag,
     LongFlagWithValue,
+    Pipe,           // |
+    InputRedir,     // <
+    OutputRedir,    // >
+    Background,     // &
     Eof,
 }
 
@@ -59,6 +63,13 @@ impl Tokenizer {
                     self.handle_flag();
                 }
             }
+            '|' => {
+                self.add_token(TokenType::Pipe);
+                self.had_cmd = false; // Reset had_cmd after pipe to allow new command
+            },
+            '<' => self.add_token(TokenType::InputRedir),
+            '>' => self.add_token(TokenType::OutputRedir),
+            '&' => self.add_token(TokenType::Background),
             _ => self.handle_word(),
         }
     }
@@ -258,5 +269,83 @@ mod tests {
         assert_eq!(tokenizer.tokens[2].kind, TokenType::Arg);
         assert_eq!(tokenizer.tokens[2].lexeme, "file.txt");
         assert_eq!(tokenizer.tokens[3].kind, TokenType::Eof);
+    }
+
+    #[test]
+    fn test_pipe_operator() {
+        let mut tokenizer = Tokenizer::new("ls -l | grep pattern".to_string());
+        tokenizer.scan_tokens();
+
+        assert_eq!(tokenizer.tokens.len(), 6);
+        assert_eq!(tokenizer.tokens[0].kind, TokenType::Cmd);
+        assert_eq!(tokenizer.tokens[0].lexeme, "ls");
+        assert_eq!(tokenizer.tokens[1].kind, TokenType::Flag);
+        assert_eq!(tokenizer.tokens[1].lexeme, "-l");
+        assert_eq!(tokenizer.tokens[2].kind, TokenType::Pipe);
+        assert_eq!(tokenizer.tokens[2].lexeme, "|");
+        assert_eq!(tokenizer.tokens[3].kind, TokenType::Cmd);
+        assert_eq!(tokenizer.tokens[3].lexeme, "grep");
+        assert_eq!(tokenizer.tokens[4].kind, TokenType::Arg);
+        assert_eq!(tokenizer.tokens[4].lexeme, "pattern");
+        assert_eq!(tokenizer.tokens[5].kind, TokenType::Eof);
+    }
+
+    #[test]
+    fn test_redirection_operators() {
+        let mut tokenizer = Tokenizer::new("cat < input.txt > output.txt".to_string());
+        tokenizer.scan_tokens();
+
+        assert_eq!(tokenizer.tokens.len(), 6);  // 5 tokens + EOF
+        assert_eq!(tokenizer.tokens[0].kind, TokenType::Cmd);
+        assert_eq!(tokenizer.tokens[0].lexeme, "cat");
+        assert_eq!(tokenizer.tokens[1].kind, TokenType::InputRedir);
+        assert_eq!(tokenizer.tokens[1].lexeme, "<");
+        assert_eq!(tokenizer.tokens[2].kind, TokenType::Arg);
+        assert_eq!(tokenizer.tokens[2].lexeme, "input.txt");
+        assert_eq!(tokenizer.tokens[3].kind, TokenType::OutputRedir);
+        assert_eq!(tokenizer.tokens[3].lexeme, ">");
+        assert_eq!(tokenizer.tokens[4].kind, TokenType::Arg);
+        assert_eq!(tokenizer.tokens[4].lexeme, "output.txt");
+        assert_eq!(tokenizer.tokens[5].kind, TokenType::Eof);
+    }
+
+    #[test]
+    fn test_background_operator() {
+        let mut tokenizer = Tokenizer::new("sleep 10 &".to_string());
+        tokenizer.scan_tokens();
+
+        assert_eq!(tokenizer.tokens.len(), 4);
+        assert_eq!(tokenizer.tokens[0].kind, TokenType::Cmd);
+        assert_eq!(tokenizer.tokens[0].lexeme, "sleep");
+        assert_eq!(tokenizer.tokens[1].kind, TokenType::Arg);
+        assert_eq!(tokenizer.tokens[1].lexeme, "10");
+        assert_eq!(tokenizer.tokens[2].kind, TokenType::Background);
+        assert_eq!(tokenizer.tokens[2].lexeme, "&");
+        assert_eq!(tokenizer.tokens[3].kind, TokenType::Eof);
+    }
+
+    #[test]
+    fn test_complex_command() {
+        let mut tokenizer = Tokenizer::new("cat file.txt | grep pattern > output.txt &".to_string());
+        tokenizer.scan_tokens();
+
+        assert_eq!(tokenizer.tokens.len(), 9);
+        assert_eq!(tokenizer.tokens[0].kind, TokenType::Cmd);
+        assert_eq!(tokenizer.tokens[0].lexeme, "cat");
+        assert_eq!(tokenizer.tokens[1].kind, TokenType::Arg);
+        assert_eq!(tokenizer.tokens[1].lexeme, "file.txt");
+        assert_eq!(tokenizer.tokens[2].kind, TokenType::Pipe);
+        assert_eq!(tokenizer.tokens[2].lexeme, "|");
+        assert_eq!(tokenizer.tokens[3].kind, TokenType::Cmd);
+        assert_eq!(tokenizer.tokens[3].lexeme, "grep");
+        assert_eq!(tokenizer.tokens[4].kind, TokenType::Arg);
+        assert_eq!(tokenizer.tokens[4].lexeme, "pattern");
+        assert_eq!(tokenizer.tokens[5].kind, TokenType::OutputRedir);
+        assert_eq!(tokenizer.tokens[5].lexeme, ">");
+        assert_eq!(tokenizer.tokens[6].kind, TokenType::Arg);
+        assert_eq!(tokenizer.tokens[6].lexeme, "output.txt");
+        assert_eq!(tokenizer.tokens[7].kind, TokenType::Background);
+        assert_eq!(tokenizer.tokens[7].lexeme, "&");
+        assert_eq!(tokenizer.tokens[8].kind, TokenType::Eof);
     }
 }
