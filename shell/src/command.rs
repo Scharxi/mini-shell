@@ -46,30 +46,189 @@ impl CommandParser {
         }
     }
 
-    fn invoke_command(&mut self, cmd: &mut Box<dyn Command>) {
-        self.append_args(cmd);
-        self.append_flags(cmd);
+    fn parse_single_command(&mut self, start: usize, end: usize) -> Result<Box<dyn Command>, String> {
+        let cmd_token = &self.tokens[start];
+        if cmd_token.kind != TokenType::Cmd {
+            return Err(format!("Expected command, got: {}", cmd_token.lexeme));
+        }
+
+        let cmd: Box<dyn Command> = match cmd_token.lexeme.as_str() {
+            "cd" => Box::new(ChangeDirCommand::new()),
+            "history" => Box::new(HistoryCommand::new()),
+            "pwd" => Box::new(PwdCommand::new()),
+            _ => Box::new(SystemCommand::new(cmd_token.lexeme.clone())),
+        };
+
+        let mut cmd = cmd;
+        
+        // Parse args and flags for this command segment
+        for token in self.tokens[start + 1..end].iter() {
+            match token.kind {
+                TokenType::Arg => cmd.get_args_mut().push(token.lexeme.clone()),
+                TokenType::Flag => cmd.get_flags_mut().push(Flag { 
+                    ident: FlagIdent::new(Some(token.lexeme.clone()), None), 
+                    value: None 
+                }),
+                TokenType::LongFlag => cmd.get_flags_mut().push(Flag { 
+                    ident: FlagIdent::new(None, Some(token.lexeme.clone())), 
+                    value: None 
+                }),
+                TokenType::LongFlagWithValue => {
+                    let parts: Vec<&str> = token.lexeme.splitn(2, '=').collect();
+                    cmd.get_flags_mut().push(Flag { 
+                        ident: FlagIdent::new(None, Some(parts[0].to_string())), 
+                        value: Some(parts[1].to_string()) 
+                    })
+                },
+                _ => {}
+            }
+        }
+
+        Ok(cmd)
     }
 
     pub fn parse(&mut self) -> Result<Box<dyn Command>, String> {
-        if let Some(token) = self.tokens.get(0) {
-            match token.kind {
-                TokenType::Cmd => {
-                    let cmd: Box<dyn Command> = match token.lexeme.as_str() {
-                        "cd" => Box::new(ChangeDirCommand::new()),
-                        "history" => Box::new(HistoryCommand::new()),
-                        "pwd" => Box::new(PwdCommand::new()),
-                        // For any other command, try to execute it as a system command
-                        _ => Box::new(SystemCommand::new(token.lexeme.clone())),
-                    };
-                    let mut cmd = cmd;
-                    self.invoke_command(&mut cmd);
-                    return Ok(cmd);
+        if self.tokens.is_empty() {
+            return Err("No command provided".to_string());
+        }
+
+        // Check if we have any pipes
+        let pipe_positions: Vec<usize> = self.tokens.iter()
+            .enumerate()
+            .filter(|(_, token)| token.kind == TokenType::Pipe)
+            .map(|(i, _)| i)
+            .collect();
+
+        // If no pipes, parse as a single command
+        if pipe_positions.is_empty() {
+            return self.parse_single_command(0, self.tokens.len());
+        }
+
+        // Create a pipeline for multiple commands
+        let mut pipeline = Pipeline::new();
+        let mut start = 0;
+
+        // Parse each command in the pipeline
+        for &pipe_pos in &pipe_positions {
+            let cmd = self.parse_single_command(start, pipe_pos)?;
+            pipeline.add_command(cmd);
+            start = pipe_pos + 1;
+        }
+
+        // Parse the last command after the last pipe
+        let last_cmd = self.parse_single_command(start, self.tokens.len())?;
+        pipeline.add_command(last_cmd);
+
+        Ok(Box::new(pipeline))
+    }
+}
+
+// Make Pipeline implement Command trait
+impl Command for Pipeline {
+    fn get_name(&self) -> &str {
+        "pipeline"
+    }
+
+    fn get_args(&self) -> &[String] {
+        &[]
+    }
+
+    fn get_flags(&self) -> &[Flag] {
+        &[]
+    }
+
+    fn get_args_mut(&mut self) -> &mut Vec<String> {
+        unimplemented!("Pipeline does not support mutable arguments")
+    }
+
+    fn get_flags_mut(&mut self) -> &mut Vec<Flag> {
+        unimplemented!("Pipeline does not support mutable flags")
+    }
+
+    fn get_io_redirection(&mut self) -> &mut IoRedirection {
+        unimplemented!("Pipeline handles I/O internally")
+    }
+
+    fn execute_impl(&self) -> Result<(), Box<dyn std::error::Error>> {
+        if self.commands.is_empty() {
+            return Ok(());
+        }
+
+        // Single command case - no pipes needed
+        if self.commands.len() == 1 {
+            return self.commands[0].execute();
+        }
+
+        // Multiple commands case - need to set up pipes
+        use std::process::{Command as ProcessCommand, Stdio};
+        
+        let mut handles = Vec::new();
+        
+        // Create all the necessary pipes
+        for i in 0..self.commands.len() - 1 {
+            let cmd = &self.commands[i];
+            let system_cmd = match cmd.get_name() {
+                "cd" | "pwd" | "history" => {
+                    return Err("Built-in commands cannot be used in pipes".into());
                 }
-                _ => return Err(format!("Expected command, got: {}", token.lexeme)),
+                name => name,
+            };
+
+            let mut process = ProcessCommand::new(system_cmd);
+            process.args(cmd.get_args());
+            process.stdout(Stdio::piped());
+            
+            if i > 0 {
+                process.stdin(Stdio::piped());
+            }
+            
+            handles.push(process);
+        }
+
+        // Handle the last command separately
+        let last_cmd = &self.commands[self.commands.len() - 1];
+        let system_cmd = match last_cmd.get_name() {
+            "cd" | "pwd" | "history" => {
+                return Err("Built-in commands cannot be used in pipes".into());
+            }
+            name => name,
+        };
+        
+        let mut last_process = ProcessCommand::new(system_cmd);
+        last_process.args(last_cmd.get_args());
+        last_process.stdin(Stdio::piped());
+        handles.push(last_process);
+
+        // Execute the pipeline
+        let mut previous_child: Option<std::process::Child> = None;
+        
+        for (i, mut process) in handles.into_iter().enumerate() {
+            if let Some(prev) = previous_child {
+                process.stdin(Stdio::from(prev.stdout.unwrap()));
+            }
+            
+            let child = process.spawn()?;
+            previous_child = Some(child);
+        }
+
+        // Wait for the last process to complete
+        if let Some(mut last_child) = previous_child {
+            let status = last_child.wait()?;
+            if !status.success() {
+                return Err(format!("Pipeline failed with status: {}", status).into());
             }
         }
-        Err("No command provided".to_string())
+
+        Ok(())
+    }
+
+    fn get_help(&self) -> CommandHelp {
+        CommandHelp {
+            short_desc: "A pipeline of commands".to_string(),
+            long_desc: "Executes multiple commands in sequence, connecting their standard output to standard input.".to_string(),
+            usage: "command1 | command2 [| command3 ...]".to_string(),
+            flags: vec![],
+        }
     }
 }
 
@@ -482,6 +641,132 @@ impl Command for SystemCommand {
     }
 }
 
+pub struct Pipeline {
+    commands: Vec<Box<dyn Command>>,
+}
+
+impl Pipeline {
+    pub fn new() -> Self {
+        Self { commands: Vec::new() }
+    }
+
+    pub fn add_command(&mut self, command: Box<dyn Command>) {
+        self.commands.push(command);
+    }
+
+    pub fn execute(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if self.commands.is_empty() {
+            return Ok(());
+        }
+
+        // Single command case - no pipes needed
+        if self.commands.len() == 1 {
+            return self.commands[0].execute();
+        }
+
+        // Multiple commands case - need to set up pipes
+        use std::process::{Command as ProcessCommand, Stdio};
+        use std::io::{Read, Write};
+        
+        let mut previous_output: Option<Vec<u8>> = None;
+        let command_count = self.commands.len();
+        
+        // Process each command in the pipeline
+        for i in 0..command_count {
+            let is_last = i == command_count - 1;
+            
+            // Take ownership of the command temporarily
+            let mut cmd = std::mem::replace(&mut self.commands[i], Box::new(SystemCommand::new("dummy".to_string())));
+            
+            match cmd.get_name() {
+                // Handle built-in commands
+                "cd" | "pwd" | "history" => {
+                    // Create pipes for I/O
+                    let mut process = ProcessCommand::new("sh");
+                    process.arg("-c").arg(format!("{} {}", cmd.get_name(), cmd.get_args().join(" ")));
+                    
+                    // Set up stdin from previous command's output
+                    if let Some(data) = previous_output.take() {
+                        let mut child = process.stdin(Stdio::piped()).spawn()?;
+                        if let Some(mut stdin) = child.stdin.take() {
+                            stdin.write_all(&data)?;
+                        }
+                        process = ProcessCommand::new("sh");
+                        process.arg("-c").arg(format!("{} {}", cmd.get_name(), cmd.get_args().join(" ")));
+                    }
+                    
+                    // Set up stdout pipe if not the last command
+                    if !is_last {
+                        process.stdout(Stdio::piped());
+                    }
+                    
+                    // Spawn the process
+                    let mut child = process.spawn()?;
+                    
+                    // Save stdout for the next command if not the last
+                    if !is_last {
+                        let mut buffer = Vec::new();
+                        if let Some(mut stdout) = child.stdout.take() {
+                            stdout.read_to_end(&mut buffer)?;
+                            previous_output = Some(buffer);
+                        }
+                    }
+                    
+                    // Wait for the process to complete
+                    let status = child.wait()?;
+                    if !status.success() {
+                        return Err(format!("Command failed with status: {}", status).into());
+                    }
+                }
+                
+                // Handle system commands
+                _ => {
+                    let mut process = ProcessCommand::new(cmd.get_name());
+                    process.args(cmd.get_args());
+                    
+                    // Set up stdin from previous command's output
+                    if let Some(data) = previous_output.take() {
+                        let mut child = process.stdin(Stdio::piped()).spawn()?;
+                        if let Some(mut stdin) = child.stdin.take() {
+                            stdin.write_all(&data)?;
+                        }
+                        process = ProcessCommand::new(cmd.get_name());
+                        process.args(cmd.get_args());
+                    }
+                    
+                    // Set up stdout pipe if not the last command
+                    if !is_last {
+                        process.stdout(Stdio::piped());
+                    }
+                    
+                    // Spawn the process
+                    let mut child = process.spawn()?;
+                    
+                    // Save stdout for the next command if not the last
+                    if !is_last {
+                        let mut buffer = Vec::new();
+                        if let Some(mut stdout) = child.stdout.take() {
+                            stdout.read_to_end(&mut buffer)?;
+                            previous_output = Some(buffer);
+                        }
+                    }
+                    
+                    // Wait for the process to complete
+                    let status = child.wait()?;
+                    if !status.success() {
+                        return Err(format!("Command failed with status: {}", status).into());
+                    }
+                }
+            }
+            
+            // Restore the command
+            self.commands[i] = cmd;
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -646,6 +931,82 @@ mod tests {
         cmd.get_args_mut().push("arg1".to_string());
         cmd.get_args_mut().push("arg2".to_string());
         assert_eq!(cmd.get_args_len(), 2);
+    }
+
+    #[test]
+    fn test_pipeline_parsing() {
+        let tokens = create_tokens("ls -l | grep test");
+        let mut parser = CommandParser::new(tokens);
+        let cmd = parser.parse().unwrap();
+        
+        // Verify it's a pipeline
+        assert_eq!(cmd.get_name(), "pipeline");
+    }
+
+    #[test]
+    fn test_pipeline_execution() {
+        let tokens = create_tokens("echo 'Hello, World!' | grep Hello");
+        let mut parser = CommandParser::new(tokens);
+        let cmd = parser.parse().unwrap();
+        
+        // Execute the pipeline
+        let result = cmd.execute();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_pipeline_with_invalid_command() {
+        let tokens = create_tokens("ls -l | nonexistent_command");
+        let mut parser = CommandParser::new(tokens);
+        let cmd = parser.parse().unwrap();
+        
+        // Execute should fail because of the nonexistent command
+        let result = cmd.execute();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_pipeline_with_echo() {
+        let tokens = create_tokens("echo test | grep test");
+        let mut parser = CommandParser::new(tokens);
+        let cmd = parser.parse().unwrap();
+        
+        // Execute the pipeline
+        let result = cmd.execute();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_pipeline_with_cat() {
+        use std::fs::File;
+        use std::io::Write;
+        
+        // Create a test file
+        let mut file = File::create("test.txt").unwrap();
+        writeln!(file, "test line 1\ntest line 2").unwrap();
+        
+        let tokens = create_tokens("cat test.txt | grep line");
+        let mut parser = CommandParser::new(tokens);
+        let cmd = parser.parse().unwrap();
+        
+        // Execute the pipeline
+        let result = cmd.execute();
+        
+        // Clean up
+        std::fs::remove_file("test.txt").unwrap();
+        
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_pipeline_with_multiple_commands() {
+        let tokens = create_tokens("echo 'line 1\nline 2\nline 3' | grep line | wc -l");
+        let mut parser = CommandParser::new(tokens);
+        let cmd = parser.parse().unwrap();
+        
+        // Execute the pipeline
+        let result = cmd.execute();
+        assert!(result.is_ok());
     }
 }
 
